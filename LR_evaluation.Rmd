@@ -1,0 +1,181 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+
+
+```{r}
+library(cvTools)
+library(labelrank)
+library(Kendall)
+library(reshape2)
+library(ggplot2)
+```
+```{r}
+source("labelrankingforests-master/RankTrees/RankTrees.R")
+source("labelrankingforests-master/RankTrees/PredRTrees.R")
+source("labelrankingforests-master/RFR.R")
+source("LR_tuning.R")
+source("LR_evaluation.R")
+source("auxiliary.R")
+```
+
+```{r}
+#B <- read.csv("metafeatures_landmarkers/B_RP_final.csv", sep=";")
+targets <- read.csv("targets/RP.csv", sep=";")
+```
+
+```{r}
+targets
+```
+
+```{r}
+#A <- read.csv("metafeatures_statistical/mf_final.csv", sep=";")
+#C <- read.csv("metafeatures_graph/graph_metafeatures_final.csv", sep=",")
+#D <- mergeUnifiedDataset(A,B,C)  
+#rm(A,B,C)
+```
+```{r}
+D <- read.csv("embeddings_grid_search/sample_100_wl6/sample_graphs_dims_10_epochs_1000_lr_0.1_batch_64_negsample_5_embeddings.csv",header = FALSE)
+```
+
+```{r}
+D
+```
+
+```{r}
+colnames(D) <- renameCols(D)
+```
+
+```{r}
+#rank_evaluation(D,targets,"MF")
+#function(dataset, ranking, strategy, onlyBaseline=F)
+data <- merge(D,targets, by.x="dataset",by.y="dataset")
+```
+```{r}
+data
+```
+
+
+```{r}
+algorithms <- sort(unique(unlist(strsplit(levels(factor(data$ranking)), split = ","))))
+```
+```{r}
+algorithms
+```
+```{r}
+orders <- lapply(data$ranking, function(x){unlist(strsplit(as.character(x), split = ','))})
+```
+
+```{r}
+orders
+```
+```{r}
+levels_ranking <- lapply(data$levels, function(x){unlist(strsplit(as.character(x), split = ','))})
+```
+
+```{r}
+levels_ranking
+```
+```{r}
+targets <- lapply(1:length(orders), function(index1,rank2,levels_ranking){
+    rank1 <- orders[[index1]]
+    unlist(lapply(rank2, function(x, levels_ranking){
+      positions <- unlist(which(rank1 == x))
+      if(length(positions)>0){
+        return (as.numeric(levels_ranking[[index1]][positions]))
+      }
+      else {
+        return (length(algorithms)/2) #(length(algorithms)) #last position!  # (length(algorithms)/2) assigning mean ranking improves results for IR but decreases for RP
+      }
+    }, levels_ranking=levels_ranking))
+  }, rank2=algorithms, levels_ranking=levels_ranking)
+```
+
+```{r}
+targets
+```
+```{r}
+targets_matrix <- as.matrix(do.call(rbind, targets))
+```
+```{r}
+targets_matrix
+```
+```{r}
+#LOOCV(data=dataset[,2:dim(dataset)[2]],targets=targets_matrix,method="kNN",baseline=NA) 
+#function(data,targets, n=1, method, baseline)
+Data=D[,2:dim(D)[2]]
+Targets=targets_matrix
+results <- list()
+for(i in 1:nrow(Data)){  
+    training <- as.matrix(Data[-i,])
+    testing <- as.matrix(Data[i,])
+    target_train <- Targets[-i,]
+    target_test <- Targets[i,]
+    
+    prediction <- bestNNLR(training,testing,target_train,target_test)
+    
+    if(length(prediction) == length(target_test)){
+      results <- append(results, Kendall(prediction,target_test)$tau)
+    }
+    else {
+      print("ignored this instance")
+      results <- append(results,-1)
+    }
+}
+```
+
+```{r}
+prediction
+```
+```{r}
+results
+```
+```{r}
+unlist(results)
+```
+```{r}
+E <- read.csv("embeddings_grid_search/sample_100_wl6/embeddings_node2vec_dims_30.csv", header = FALSE)
+colnames(E) <- renameCols(E)
+```
+```{r}
+E
+```
+
+```{r}
+targets_1 <- read.csv("targets/RP.csv", sep=";")
+```
+
+```{r}
+targets_1
+```
+
+```{r}
+node2vec_result = rank_evaluation(E, targets_1, strategy="node2vec", onlyBaseline=FALSE)
+```
+```{r}
+G <- read.csv("embeddings_grid_search/sample_100_wl6/sample_graphs_dims_30_epochs_2000_lr_0.3_batch_256_negsample_10_embeddings.csv", header = FALSE)
+colnames(G) <- renameCols(G)
+targets_2 <- read.csv("targets/RP.csv", sep=";")
+best_cf2vec_result = rank_evaluation(G, targets_2, strategy="best_cf2vec", onlyBaseline=FALSE)
+
+```
+
+```{r}
+alternative_table <- cbind(best_cf2vec_result, node2vec_result)
+```
+
+```{r}
+alternative_table
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

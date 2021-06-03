@@ -1,0 +1,180 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(cvTools)
+library(labelrank)
+library(Kendall)
+library(reshape2)
+```
+
+```{r}
+source("labelrankingforests-master/RankTrees/RankTrees.R")
+source("labelrankingforests-master/RankTrees/PredRTrees.R")
+source("labelrankingforests-master/RFR.R")
+source("LR_tuning.R")
+source("LR_evaluation.R")
+source("auxiliary.R")
+```
+```{r}
+B <- read.csv("metafeatures_landmarkers/B_RP_final.csv", sep=";")
+targets <- read.csv("targets/RP.csv", sep=";")
+```
+
+```{r}
+A <- read.csv("metafeatures_statistical/mf_final.csv", sep=";")
+C <- read.csv("metafeatures_graph/graph_metafeatures_final.csv", sep=",")
+D <- mergeUnifiedDataset(A,B,C)  
+rm(A,B,C)
+```
+```{r}
+D
+```
+```{r}
+cf4vec <- read.csv("embeddings_grid_search/sample_100_wl6/sample_graphs_dims_30_epochs_2000_lr_0.3_batch_256_negsample_10_embeddings.csv", header = F)
+tmp <- colnames(cf4vec)
+tmp[1] <- "dataset"
+colnames(cf4vec) <- tmp
+```
+
+```{r}
+cf4vec
+```
+
+
+```{r}
+keepcolumn <- c("dataset","performance")
+perf_values <- targets[,which(colnames(targets) %in% keepcolumn)]
+```
+
+```{r}
+perf_values
+```
+```{r}
+#rank_evaluation_baselevel_impact(D,targets,perf_values,goal,"MF")
+#function(dataset, ranking, perf_values, goal, strategy, onlyBaseline=F)
+data <- merge(D,targets, by.x="dataset",by.y="dataset")
+```
+
+```{r}
+data
+```
+```{r}
+algorithms <- sort(unique(unlist(strsplit(levels(factor(data$ranking)), split = ","))))
+```
+
+```{r}
+algorithms
+```
+```{r}
+orders <- lapply(data$ranking, function(x){unlist(strsplit(as.character(x), split = ','))})
+```
+
+```{r}
+orders
+```
+```{r}
+levels_ranking <- lapply(data$levels, function(x){unlist(strsplit(as.character(x), split = ','))})
+```
+
+```{r}
+levels_ranking
+```
+```{r}
+ targets <- lapply(1:length(orders), function(index1,rank2,levels_ranking){
+    rank1 <- orders[[index1]]
+    unlist(lapply(rank2, function(x, levels_ranking){
+      positions <- unlist(which(rank1 == x))
+      if(length(positions)>0){
+        return (as.numeric(levels_ranking[[index1]][positions]))
+      }
+      else {
+        return (length(algorithms)/2) #(length(algorithms)) #last position!  # (length(algorithms)/2) assigning mean ranking improves results for IR but decreases for RP
+      }
+    }, levels_ranking=levels_ranking))
+  }, rank2=algorithms, levels_ranking=levels_ranking)
+```
+
+```{r}
+targets_matrix <- as.matrix(do.call(rbind, targets))
+```
+```{r}
+targets_matrix
+```
+
+
+```{r}
+performance <- lapply(1:dim(targets_matrix)[1], function(index,perf,targets){
+    new_order <- targets[index,]
+    print(new_order)
+    performance_vector <- as.numeric(unlist(strsplit(as.character(perf[index]),",")))
+    print(performance_vector)
+    
+    result <- unlist(lapply(1:length(performance_vector), function(x, vector, ordering){
+      vector[ordering[x]]  #warning vem daqui!! - funciona bem mas devia resolver problema
+    }, vector = performance_vector, ordering = new_order))
+    result
+  }, targets= targets_matrix, perf=perf_values$performance)
+  performance_matrix <- as.matrix(do.call(rbind, performance))
+```
+
+```{r}
+performance_matrix
+```
+```{r}
+#LOOCV_baselevel_impact(data=dataset[,2:dim(dataset)[2]],targets=targets_matrix,method="kNN",baseline=NA,performance=performance_matrix,goal=goal,n=x)
+#function(data,targets, n=1, method, baseline,performance, goal)
+Data=D[,2:dim(D)[2]]
+Result <- data.frame(matrix(nrow = nrow(Data), ncol = dim(targets_matrix)[2]))
+rownames(Result) <- Data$dataset
+```
+
+```{r}
+Result
+```
+```{r}
+for(i in 1:nrow(Data)){  #LOOCV
+    training <- as.matrix(Data[-i,])
+    testing <- as.matrix(Data[i,])
+    target_train <- targets_matrix[-i,]
+    target_test <- targets_matrix[i,]
+    
+    prediction <- bestNNLR(training,testing,target_train,target_test)
+    print(prediction)
+    #prediction <- nn_rank(train.x = training, test.x = testing, n, y = target_train)
+    
+    if(length(prediction) == length(target_test)){
+      print(order(prediction))
+      new_performance_vector <-performance_matrix[i,order(prediction)]
+      print(new_performance_vector)
+      
+      Result[i,] <- as.numeric(lapply(1:dim(targets_matrix)[2], performance_at_k_min, values=new_performance_vector))
+    }
+    else {
+      print("ignored this instance")
+      Result[i,] <- 1
+    }
+    
+}
+```
+```{r}
+Result
+```
+
+```{r}
+tmp <- apply(Result,2,mean,na.rm=T)
+print(tmp)
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

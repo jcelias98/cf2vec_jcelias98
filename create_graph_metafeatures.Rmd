@@ -1,0 +1,372 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+suppressMessages(library(hash))
+suppressMessages(library(igraph))
+suppressMessages(library(entropy))
+suppressMessages(library(ineq))
+suppressMessages(library(e1071))
+```
+
+```{r}
+file <- "yahoo-music.csv"
+dataset <- read.csv(file,sep=";")
+colnames(dataset) <- c("user","item","rating")
+```
+
+```{r}
+dataset
+```
+
+```{r}
+mf <- hash()
+
+all_users <- unique(dataset$user)
+all_items <- unique(dataset$item)
+```
+
+```{r}
+#create graph
+g <- graph.empty() 
+
+g <- add.vertices(g,nv=length(all_users),attr=list(name=paste0('U',all_users),
+                                                                type=rep(TRUE,length(all_users)), color = "red"))
+g <- add.vertices(g,nv=length(all_items),attr=list(name=paste0('I',all_items),
+                                                 type=rep(TRUE,length(all_items)), color = "green"))
+```
+
+```{r}
+dataset$user <- unlist(lapply(dataset$user,function(x){ paste0('U',x)}))
+dataset$item <- unlist(lapply(dataset$item,function(x){ paste0('I',x)}))
+```
+
+```{r}
+dataset
+```
+
+```{r}
+edgeListVec <- as.vector(t(as.matrix(dataset[,1:2])))
+```
+
+```{r}
+edgeListVec
+```
+
+```{r}
+g <- add.edges(g,edgeListVec, label = as.numeric(dataset[,3]), weight = as.numeric(dataset[,3]))
+```
+
+```{r}
+g <- subgraph.edges(g, sample(c(1:gsize(g)),0.10*gsize(g)))
+```
+
+```{r}
+rm(dataset,all_users,all_items,edgeListVec)
+```
+
+```{r}
+print("graph is built")
+print(is_bipartite(g))
+```
+```{r}
+mf$edge_density <- edge_density(g)
+mf$girth <- girth(g)$girth
+mf$gorder <- gorder(g)
+mf$gsize <- gsize(g)
+mf$radius <- radius(g)
+
+print("graph measures finished")
+```
+```{r}
+mf$radius
+```
+```{r}
+users <- V(g)[which(startsWith(V(g)$name, "U"))]
+items <- V(g)[which(startsWith(V(g)$name, "I"))]
+all <- V(g)
+```
+
+
+```{r}
+
+postFunctionsVector <- function(mf, name, data){
+  
+  data <- data[is.finite(data)]
+
+  #central tendency
+  #mf[paste(name,"median",sep="_")] = median(data)
+  mf[paste(name,"mean",sep="_")] = mean(data)
+  
+  #dispersion
+  #mf[paste(name,"max",sep="_")] = max(data)
+  #mf[paste(name,"min",sep="_")] = min(data)
+  #mf[paste(name,"sd",sep="_")] = sd(data)
+  mf[paste(name,"variance",sep="_")] = var(data)
+  
+  #shape
+  mf[paste(name,"skewness",sep="_")] = skewness(data)
+  #mf[paste(name,"kurtosis",sep="_")] = kurtosis(data)
+  
+  # #information-theoretical
+  mf[paste(name,"entropy",sep="_")] = entropy(data)
+  # mf[paste(name,"gini",sep="_")] = ineq(data,type="Gini")
+  
+}
+
+vectorMetafeatures <- function(graph, objects, mf_hash, target){
+  
+  postFunctionsVector(mf_hash,paste0(target,"_alpha"),alpha_centrality(graph, nodes = objects))
+  postFunctionsVector(mf_hash,paste0(target,"_closeness"),closeness(graph, vids = objects))
+  postFunctionsVector(mf_hash,paste0(target,"_constraint"),constraint(graph, nodes = objects))
+  postFunctionsVector(mf_hash,paste0(target,"_degree"),degree(graph, v = objects))
+  postFunctionsVector(mf_hash,paste0(target,"_diversity"),diversity(graph, vids = objects))
+  postFunctionsVector(mf_hash,paste0(target,"_eccentricity"),eccentricity(graph, vids = objects))
+  postFunctionsVector(mf_hash,paste0(target,"_page_rank"),page_rank(graph, vids = objects)$vector)
+  postFunctionsVector(mf_hash,paste0(target,"_strength"),strength(graph, vids = objects))
+  
+  postFunctionsVector(mf_hash,
+                      paste0(target,"_neighbors"),
+                      unlist(lapply(objects, function(obj){
+                        length(neighbors(graph,v = obj))
+                      }))) 
+  
+  
+  #return(mf_hash)
+}
+```
+
+```{r}
+x <- vectorMetafeatures(g, users, mf, "user")
+x <- vectorMetafeatures(g, items, mf, "item")
+x <- vectorMetafeatures(g, all, mf, "g")
+```
+
+```{r}
+mf
+```
+
+```{r}
+getValuesByKey <- function(results, key){
+  results[which(startsWith(names(results), key))]
+}
+
+decomposeByMetric <- function(original, mf_hash, function_name, targets = c("g_","user_","item_")){
+
+  users <- getValuesByKey(original,"U")
+  items <- getValuesByKey(original,"I")
+  
+  tmp <- list()
+  if("g_" %in% targets && "user_" %in% targets && "item_" %in% targets){
+    tmp <- list(original,users,items)
+  }
+  else {
+    tmp <- list(original)
+    target <- ""
+  }
+  
+  lapply(1:length(tmp), function(index, mf_hash, targets, function_name){
+    results <- tmp[[index]]
+    target <- targets[index]
+    postFunctionsVector(mf_hash,paste0(target,function_name),results)
+  }, mf_hash=mf_hash, targets=targets, function_name)
+  
+  return(mf_hash)
+}
+
+vectorMetafeaturesPost <- function(graph, mf_hash, target, candidates){
+
+  decomposeByMetric(authority_score(graph)$vector, mf_hash, paste0(target,"_authority.score"), candidates)
+  decomposeByMetric(coreness(graph), mf_hash, paste0(target,"_coreness"), candidates)
+  decomposeByMetric(eigen_centrality(graph)$vector, mf_hash, paste0(target,"_eigen.centrality"), candidates)
+  decomposeByMetric(hub_score(graph)$vector, mf_hash, paste0(target,"_hub.score"), candidates)
+  decomposeByMetric(knn(simplify(graph))$knn, mf_hash, paste0(target,"_knn"), candidates)
+  decomposeByMetric(local_scan(graph), mf_hash, paste0(target,"_local.scan"), candidates)
+  #decomposeByMetric(max_cardinality(graph)$alpha, mf_hash, paste0(target,"_max.cardinality"), candidates) #erro grid
+
+  #return (mf_hash)
+}
+
+```
+
+
+```{r}
+x <- vectorMetafeaturesPost(g,mf,"",c("g","user","item"))
+```
+
+```{r}
+mf
+```
+
+```{r}
+print("vertex metafeatures finished")
+```
+```{r}
+users <- sample(users, ifelse(length(users) < 100, length(users),100))
+items <- sample(items, ifelse(length(items) < 100, length(items),100))
+```
+
+```{r}
+all <- sample(all,ifelse(length(all) < 100, length(all),100))
+```
+
+```{r}
+postFunctionsMatrix <- function(mf_hash, target, matrix){
+  
+  matrix[!is.finite(matrix)] <- 0
+  
+  postFunctionsVector(mf_hash,paste0(target,"_sum"),apply(matrix, 1, sum))
+  postFunctionsVector(mf_hash,paste0(target,"_mean"),apply(matrix, 1, mean))
+  postFunctionsVector(mf_hash,paste0(target,"_count"),apply(matrix, 1, function(x){length(which(x>0))}))
+  postFunctionsVector(mf_hash,paste0(target,"_variance"),apply(matrix, 1, var))
+  
+}
+
+matrixMetafeatures <- function(graph,objects, mf_hash, target){
+  
+  postFunctionsMatrix(mf_hash,paste0(target,"_similarity"),similarity(graph, vids = objects))
+  postFunctionsMatrix(mf_hash,paste0(target,"_distances"),distances(graph, v = objects))
+}
+
+```
+
+
+```{r}
+x <- matrixMetafeatures(g,users,mf,"user")
+x <- matrixMetafeatures(g,items,mf,"item")
+x <- matrixMetafeatures(g,all,mf,"all")
+```
+
+```{r}
+print("matrix metafeatures finished")
+
+rm(users)
+rm(items)
+rm(all)
+```
+```{r}
+mf
+```
+
+```{r}
+getVertexBySetID <- function(graph,membership,names){
+  lapply(1:max(membership), function(id, g){
+    x <- names[which(membership == id)] 
+    #y <- V(g)[!is.na(match(V(g)$name, x))]  
+    x
+  }, g=graph)
+}
+
+subgraphMetafeatures <- function(graph,sets_elements,mf_hash,target){
+  
+  new_mf <- hash()
+  
+  lapply(1:ifelse(length(sets_elements)<10,length(sets_elements),10) , function(x,graph,mf,target){
+    elem <- sets_elements[[x]]
+
+      sg <- induced_subgraph(graph = graph,v = elem)
+  
+      tryCatch({
+        vectorMetafeaturesPost(sg,mf,paste0(target,"-",x),c("g_")) 
+        vectorMetafeatures(sg, elem, mf, paste0(target,"-",x)) 
+      }, error = function(e) {
+        print(e)
+        return(NA)
+      })
+    
+
+    
+  }, graph=graph, target=target, mf=new_mf)
+
+  postProcessSubgraphmetafeatures(sets_elements,new_mf,target,mf_hash)
+}
+
+postProcessSubgraphmetafeatures <- function(sets_elements,mf_hash,target,hash_mf){
+
+  target_keys <- unique(unlist(lapply(keys(mf_hash),function(x){
+    tmp <- gsub(paste0("g_",target),'',x)
+    tmp <- gsub(target,'',tmp)
+    tmp <- gsub('[[:digit:]]+', '',tmp)
+    tmp <- gsub('-_', '',tmp)
+    tmp
+  })))
+  #print(target_keys)
+
+  for(index in 1:length(target_keys)){
+    filtered <- unlist(lapply(1:length(sets_elements), function(x){
+      new_key <- paste0(target,"-",x,"_",target_keys[index])
+      matches <- match(new_key,keys(mf_hash))
+      
+      result <- unlist(lapply(1:length(matches), function(y){
+        keys(mf_hash)[matches[y]]
+      }))
+
+      result <<- result[!is.na(result)]
+
+      if(is.na(result)){  
+        new_key <- paste0("g_",target,"-",x,"_",target_keys[index])
+        matches <- match(new_key,keys(mf_hash))
+        
+        result <- unlist(lapply(1:length(matches), function(y){
+          keys(mf_hash)[matches[y]]
+        }))
+      }
+      result <<- result[!is.na(result)]
+      result
+    }))
+    
+    filtered_vals <- unlist(lapply(filtered, function(x){
+      mf_hash[[x]]
+    }))
+    
+    # print(paste0(target,target_keys[index]))
+    # print(filtered)
+    # print(target_keys[index])
+    # print(filtered_vals)
+    
+    postFunctionsVector(hash_mf, paste0(target,target_keys[index]), filtered_vals)
+  }
+
+}
+
+setMetafeatures <- function(graph,mf_hash){
+  g1 <- as.undirected(graph)
+  
+  x <- cluster_louvain(g1)
+  x_v <- getVertexBySetID(g1,x$membership,x$names)
+  subgraphMetafeatures(g1,x_v,mf_hash,"communities_")
+
+  y <- components(g)
+  y_v <- getVertexBySetID(g,y$membership, names(y$membership))
+  subgraphMetafeatures(g,y_v,mf_hash,"components_")
+}
+```
+
+```{r}
+x <- setMetafeatures(g,mf)
+```
+
+```{r}
+mf
+```
+
+
+
+
+
+
+
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
